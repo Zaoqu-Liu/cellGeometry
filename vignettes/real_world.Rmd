@@ -1,0 +1,434 @@
+---
+title: "Real-World Application: Blood Transcriptome Deconvolution"
+author: "Zaoqu Liu, Myles Lewis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Real-World Application: Blood Transcriptome Deconvolution}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  fig.align = "center",
+  eval = FALSE
+)
+```
+
+# Introduction
+
+This vignette demonstrates a complete real-world workflow for deconvoluting peripheral blood bulk RNA-Seq data using cellGeometry. We will:
+
+1. Load and preprocess single-cell reference data
+2. Build cell type signatures
+3. Apply signatures to bulk RNA-Seq samples
+4. Validate and interpret results
+
+# Prerequisites
+
+## Required Packages
+
+```{r packages}
+# Core packages
+library(cellGeometry)
+library(ggplot2)
+library(dplyr)
+
+# For reading single-cell data
+library(zellkonverter)
+library(SingleCellExperiment)
+
+# For gene ID conversion
+library(AnnotationHub)
+```
+
+## Data Sources
+
+For this tutorial, we use the Cell Typist dataset from the CZ CELLxGENE repository:
+
+- **Single-cell reference**: [Cell Typist Global](https://cellxgene.cziscience.com/collections/62ef75e4-cbea-454e-a0ce-998ec40223d3)
+- **Download link**: [h5ad file (2.9 GB)](https://datasets.cellxgene.cziscience.com/2ac906a5-9725-4258-8e36-21a9f6c0302a.h5ad)
+
+# Stage 1: Building Cell Type Signatures
+
+## Loading Single-Cell Data
+
+```{r load-sc}
+# Load h5ad file with HDF5 backend (data stays on disk)
+typist_h5 <- readH5AD("celltypist_immune.h5ad",
+                       use_hdf5 = TRUE, reader = "R")
+
+# Extract count matrix and metadata
+mat <- typist_h5@assays@data$X
+rownames(mat) <- rownames(typist_h5)
+meta <- typist_h5@colData@listData
+
+# Check dimensions
+cat("Cells:", ncol(mat), "\n")
+cat("Genes:", nrow(mat), "\n")
+```
+
+## Exploring Cell Annotations
+
+```{r explore-annotations}
+# Examine available cell type annotations
+table(meta$Majority_voting_CellTypist)
+
+# Broader cell groups
+table(meta$Majority_voting_CellTypist_high)
+
+# Tissue distribution
+table(meta$tissue)
+```
+
+## Filtering to Blood Cells
+
+For peripheral blood deconvolution, we filter to blood-derived cells:
+
+```{r filter-blood}
+# Define cell type vectors
+subcl <- meta$Majority_voting_CellTypist
+cellgrp <- meta$Majority_voting_CellTypist_high
+
+# Filter to blood only
+subcl[meta$tissue != "blood"] <- NA
+cellgrp[meta$tissue != "blood"] <- NA
+
+# Check remaining cells
+cat("Blood cells:", sum(!is.na(subcl)), "\n")
+cat("Cell types:", length(unique(subcl[!is.na(subcl)])), "\n")
+```
+
+## Building Marker Signatures
+
+```{r build-markers}
+# Build cellMarkers object
+# This is the most time-consuming step
+mk <- cellMarkers(mat, 
+                  subclass = subcl, 
+                  cellgroup = cellgrp,
+                  dual_mean = TRUE,  # For simulation validation
+                  cores = 4)         # Adjust based on your system
+
+# Convert Ensembl IDs to gene symbols
+ah <- AnnotationHub()
+ensDb_v110 <- ah[["AH113665"]]
+mk <- gene2symbol(mk, ensDb_v110)
+```
+
+# Stage 2: Signature Quality Control
+
+## Visualizing the Signature
+
+```{r visualize-signature}
+# Full signature heatmap
+signature_heatmap(mk)
+
+# Top 5 genes per cell type
+signature_heatmap(mk, top = 5)
+
+# With sphere scaling (equal gene weights)
+signature_heatmap(mk, top = 10, scale = "sphere")
+```
+
+## Spillover Analysis
+
+```{r spillover-analysis}
+# Visualize spillover between cell types
+spillover_heatmap(mk)
+
+# Calculate cosine similarity
+cs <- cos_similarity(mk)
+
+# Identify highly similar cell types
+rank_angle(cs)
+```
+
+## Diagnostic Assessment
+
+```{r diagnostics}
+# Comprehensive signature diagnostics
+diag_results <- diagnose(mk)
+
+# View problematic cell types
+print(diag_results)
+```
+
+## Refining the Signature
+
+Based on diagnostics, remove or merge problematic cell types:
+
+```{r refine-signature}
+# Remove overlapping cell types
+mk <- updateMarkers(mk,
+    remove_subclass = c("Helper T cells", "Cytotoxic T cells")
+)
+
+# Verify improvement
+spillover_heatmap(mk)
+```
+
+# Stage 3: Preparing Bulk RNA-Seq Data
+
+## Loading Bulk Data
+
+```{r load-bulk}
+# Load your bulk RNA-Seq data
+# Expected format: genes in rows, samples in columns
+bulk_data <- read.csv("my_bulk_rnaseq.csv", row.names = 1)
+
+# Check format
+cat("Genes:", nrow(bulk_data), "\n")
+cat("Samples:", ncol(bulk_data), "\n")
+head(bulk_data)
+```
+
+## Data Preprocessing
+
+```{r preprocess-bulk}
+# Ensure data is in raw counts (not TPM, FPKM, or VST)
+# Zero counts should truly be zero
+
+# Check for gene ID format matching
+head(rownames(bulk_data))
+head(rownames(mk$genemeans))
+
+# If needed, convert gene IDs
+# rownames(bulk_data) <- gene2symbol(rownames(bulk_data), ensDb_v110)
+
+# Update markers with bulk-specific genes
+mk <- updateMarkers(mk, bulkdata = bulk_data)
+```
+
+## Verifying Gene Overlap
+
+```{r gene-overlap}
+# Check overlap between signature and bulk data
+signature_genes <- rownames(mk$subclass_marker$signature)
+bulk_genes <- rownames(bulk_data)
+
+overlap <- intersect(signature_genes, bulk_genes)
+cat("Signature genes:", length(signature_genes), "\n")
+cat("Bulk genes:", length(bulk_genes), "\n")
+cat("Overlap:", length(overlap), "\n")
+cat("Coverage:", round(length(overlap)/length(signature_genes)*100, 1), "%\n")
+```
+
+# Stage 4: Deconvolution
+
+## Running Deconvolution
+
+```{r deconvolute}
+# Standard deconvolution for real-world bulk data
+fit <- deconvolute(mk, bulk_data,
+                   use_filter = TRUE,      # Recommended for real data
+                   weight_method = "equal", # Equal gene weighting
+                   count_space = TRUE,     # Work in count space
+                   arith_mean = FALSE)     # Use log2 mean
+```
+
+## Extracting Results
+
+```{r extract-results}
+# Cell counts (theoretical)
+cell_counts <- fit$subclass$output
+
+# Cell percentages
+cell_percent <- fit$subclass$percent
+
+# Group-level results
+group_counts <- fit$group$output
+group_percent <- fit$group$percent
+
+# View results
+head(round(cell_percent, 2))
+```
+
+# Stage 5: Validation and Interpretation
+
+## Using Simulated Data for Validation
+
+Before analyzing real bulk data, validate with simulation:
+
+```{r simulation-validation}
+# Generate pseudo-bulk samples
+set.seed(42)
+sim_counts <- generate_samples(mk, 30)
+sim_percent <- sim_counts / rowSums(sim_counts) * 100
+sim_pseudo <- simulate_bulk(mk, sim_counts)
+
+# Deconvolute simulated data
+fit_sim <- deconvolute(mk, sim_pseudo, use_filter = FALSE)
+
+# Compare with ground truth
+metrics <- metric_set(sim_percent, fit_sim$subclass$percent)
+summary(metrics)
+```
+
+## Visualizing Validation Results
+
+```{r plot-validation}
+# Scatter plots: predicted vs true
+plot_set(sim_percent, fit_sim$subclass$percent)
+
+# Summary statistics
+metrics_table <- data.frame(
+  CellType = colnames(sim_percent),
+  Pearson_R = sapply(colnames(sim_percent), function(ct) {
+    cor(sim_percent[, ct], fit_sim$subclass$percent[, ct])
+  }),
+  RMSE = sapply(colnames(sim_percent), function(ct) {
+    sqrt(mean((sim_percent[, ct] - fit_sim$subclass$percent[, ct])^2))
+  })
+)
+print(metrics_table)
+```
+
+## Interpreting Real Results
+
+```{r interpret-results}
+# Visualize sample composition
+stack_plot(fit$subclass$percent)
+
+# Summary statistics per cell type
+cell_summary <- data.frame(
+  CellType = colnames(cell_percent),
+  Mean = colMeans(cell_percent),
+  SD = apply(cell_percent, 2, sd),
+  Min = apply(cell_percent, 2, min),
+  Max = apply(cell_percent, 2, max)
+)
+print(cell_summary)
+```
+
+# Stage 6: Advanced Analysis
+
+## Parameter Tuning
+
+```{r tuning}
+# Tune deconvolution parameters using simulation
+tune_result <- tune_deconv(mk, sim_pseudo, sim_counts,
+    grid = list(
+        nsubclass = c(10, 15, 25, 50, 100),
+        expfilter = c(0.1, 0.25, 0.5),
+        weight_method = c("none", "equal")
+    ),
+    use_filter = TRUE,
+    cores = 4
+)
+
+# View best parameters
+summary(tune_result)
+
+# Visualize tuning landscape
+plot_tune(tune_result, xvar = "nsubclass", group = "weight_method")
+```
+
+## Residual Diagnostics
+
+```{r residual-diagnostics}
+# Extract residuals
+resid <- residuals(fit)
+
+# Studentized residuals
+student_resid <- rstudent(fit)
+
+# Plot residuals
+plot_residuals(fit)
+
+# Identify outlier genes
+outlier_genes <- which(abs(student_resid) > 3, arr.ind = TRUE)
+```
+
+## Association with Clinical Variables
+
+```{r clinical-association}
+# Example: associate cell proportions with clinical outcomes
+clinical_data <- data.frame(
+  sample = colnames(bulk_data),
+  response = c(rep("Responder", 15), rep("Non-responder", 15))
+)
+
+# Merge with deconvolution results
+results_with_clinical <- merge(
+  data.frame(sample = rownames(cell_percent), cell_percent),
+  clinical_data,
+  by = "sample"
+)
+
+# Statistical comparison
+for(ct in colnames(cell_percent)) {
+  test <- wilcox.test(
+    results_with_clinical[[ct]][results_with_clinical$response == "Responder"],
+    results_with_clinical[[ct]][results_with_clinical$response == "Non-responder"]
+  )
+  cat(ct, ": p =", format(test$p.value, digits = 3), "\n")
+}
+```
+
+# Best Practices
+
+## Checklist for Quality Analysis
+
+1. **Single-Cell Reference**
+   - [ ] Use tissue-matched reference when possible
+   - [ ] Ensure adequate cell numbers per type (>100 cells recommended)
+   - [ ] Check for batch effects in reference data
+
+2. **Signature Building**
+   - [ ] Inspect signature heatmap for clear patterns
+   - [ ] Check spillover matrix for high off-diagonal values
+   - [ ] Run `diagnose()` to identify problematic cell types
+
+3. **Bulk Data Preparation**
+   - [ ] Use raw counts (not normalized)
+   - [ ] Ensure gene ID format matches reference
+   - [ ] Verify sufficient gene overlap with signature
+
+4. **Deconvolution**
+   - [ ] Validate with simulation before real data
+   - [ ] Use appropriate parameters for your data type
+   - [ ] Check residuals for outliers
+
+5. **Interpretation**
+   - [ ] Consider biological plausibility of results
+   - [ ] Report confidence intervals or uncertainty estimates
+   - [ ] Validate with orthogonal methods if possible
+
+## Common Pitfalls
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| Tissue mismatch | Poor simulation performance | Use tissue-matched reference |
+| Gene ID mismatch | Many missing signature genes | Convert IDs consistently |
+| Normalized input | Negative or extreme values | Use raw counts |
+| Too few markers | High spillover | Increase `nsubclass` |
+| Similar cell types | Cannot distinguish subtypes | Merge or remove one |
+
+# Summary
+
+cellGeometry provides a principled geometric approach to bulk RNA-Seq deconvolution:
+
+1. **Build** cell type signatures from single-cell reference
+2. **Validate** using simulation before real data
+3. **Deconvolute** bulk samples with compensation for spillover
+4. **Interpret** results in biological context
+
+For questions or issues, please visit: https://github.com/Zaoqu-Liu/cellGeometry
+
+# Session Info
+
+```{r session, eval=TRUE}
+sessionInfo()
+```

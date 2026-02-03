@@ -1,7 +1,7 @@
 ---
-title: "Brain atlas deconvolution"
-author: "Myles Lewis"
-date: "2025-06-05"
+title: "Large-Scale Deconvolution: Human Brain Atlas"
+author: "Zaoqu Liu, Myles Lewis"
+date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true

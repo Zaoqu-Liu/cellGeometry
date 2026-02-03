@@ -1,12 +1,17 @@
-# cellGeometry <img src="man/figures/logo.png" align="right" height="139" />
+# cellGeometry <img src="man/figures/logo.png" align="right" height="139" alt="" />
 
+<!-- badges: start -->
+[![Documentation](https://img.shields.io/badge/docs-pkgdown-blue.svg)](https://zaoqu-liu.github.io/cellGeometry/)
 [![R-universe](https://zaoqu-liu.r-universe.dev/badges/cellGeometry)](https://zaoqu-liu.r-universe.dev/cellGeometry)
 [![CRAN](https://www.r-pkg.org/badges/version/cellGeometry)](https://cran.r-project.org/package=cellGeometry)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+<!-- badges: end -->
 
 ## Overview
 
 **cellGeometry** is an R package for ultrafast deconvolution of bulk RNA-Sequencing data using single-cell RNA-Sequencing reference datasets. The package implements a novel geometric approach based on high-dimensional vector projection, enabling accurate estimation of cell type proportions in heterogeneous tissue samples.
+
+📖 **Documentation**: https://zaoqu-liu.github.io/cellGeometry/
 
 ### Key Features
 
@@ -78,6 +83,8 @@ $$\hat{\mathbf{p}} = \mathbf{C}^{-1} \cdot \text{proj}(\mathbf{b})$$
 
 where $\hat{\mathbf{p}}$ represents the estimated cell type proportions and $\mathbf{b}$ is the bulk expression profile.
 
+For detailed mathematical foundations, see the [Algorithm Vignette](https://zaoqu-liu.github.io/cellGeometry/articles/algorithm.html).
+
 ## Quick Start
 
 ### Basic Workflow
@@ -119,87 +126,13 @@ meta <- sce@colData@listData
 mk <- cellMarkers(mat, subclass = meta$cell_type, cores = 4)
 ```
 
-## Example Analysis
+## Vignettes
 
-### Cell Typist Immune Cell Dataset
-
-This example uses the Cell Typist Global dataset containing 329,762 immune cells from the [CZ CELLxGENE repository](https://cellxgene.cziscience.com/collections/62ef75e4-cbea-454e-a0ce-998ec40223d3).
-
-```r
-library(zellkonverter)
-library(cellGeometry)
-library(AnnotationHub)
-
-# Load data
-typist <- readH5AD("celltypist_immune.h5ad", use_hdf5 = TRUE, reader = "R")
-mat <- typist@assays@data$X
-rownames(mat) <- rownames(typist)
-meta <- typist@colData@listData
-
-# Define cell annotations
-subcl <- meta$Majority_voting_CellTypist
-cellgrp <- meta$Majority_voting_CellTypist_high
-
-# Build markers with parallelization
-mk <- cellMarkers(mat, subclass = subcl, cellgroup = cellgrp, cores = 4)
-
-# Convert Ensembl IDs to gene symbols
-ah <- AnnotationHub()
-ensDb <- ah[["AH113665"]]
-mk <- gene2symbol(mk, ensDb)
-
-# Visualize signature
-signature_heatmap(mk)
-spillover_heatmap(mk)
-```
-
-### Signature Refinement
-
-```r
-# Remove overlapping cell types
-mk <- updateMarkers(mk,
-    remove_subclass = c("Helper T cells", "Cytotoxic T cells")
-)
-
-# Diagnose signature quality
-diagnose(mk)
-```
-
-### Simulation and Validation
-
-```r
-# Generate pseudo-bulk samples
-set.seed(42)
-sim_counts <- generate_samples(mk, n = 25)
-sim_bulk <- simulate_bulk(mk, sim_counts)
-
-# Deconvolute and evaluate
-fit <- deconvolute(mk, sim_bulk)
-
-# Assess performance
-metrics <- metric_set(
-    obs = sim_counts / rowSums(sim_counts) * 100,
-    pred = fit$subclass$percent
-)
-print(metrics)
-
-# Visualize results
-plot_set(sim_counts, fit$subclass$output)
-```
-
-### Parameter Tuning
-
-```r
-# Optimize deconvolution parameters
-tune_result <- tune_deconv(mk, sim_bulk, sim_counts,
-    nsubclass = c(15, 20, 25, 30),
-    noisefraction = c(0.2, 0.25, 0.3)
-)
-
-# Apply optimal parameters
-summary(tune_result)
-plot_tune(tune_result)
-```
+- [Quick Start Guide](https://zaoqu-liu.github.io/cellGeometry/articles/intro.html) - Getting started with cellGeometry
+- [Mathematical Foundations](https://zaoqu-liu.github.io/cellGeometry/articles/algorithm.html) - Detailed algorithm explanation
+- [Visualization Guide](https://zaoqu-liu.github.io/cellGeometry/articles/visualization.html) - Plotting and interpretation
+- [Real-World Application](https://zaoqu-liu.github.io/cellGeometry/articles/real_world.html) - Complete analysis workflow
+- [Brain Atlas Example](https://zaoqu-liu.github.io/cellGeometry/articles/brain_atlas.html) - Large-scale deconvolution
 
 ## Key Functions
 
@@ -234,4 +167,5 @@ This package is licensed under the [GPL-3.0 License](https://www.gnu.org/license
 
 - **Maintainer**: Zaoqu Liu (liuzaoqu@163.com)
 - **GitHub**: [https://github.com/Zaoqu-Liu/cellGeometry](https://github.com/Zaoqu-Liu/cellGeometry)
+- **Documentation**: [https://zaoqu-liu.github.io/cellGeometry/](https://zaoqu-liu.github.io/cellGeometry/)
 - **Issues**: [https://github.com/Zaoqu-Liu/cellGeometry/issues](https://github.com/Zaoqu-Liu/cellGeometry/issues)

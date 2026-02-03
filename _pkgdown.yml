@@ -1,0 +1,161 @@
+url: https://zaoqu-liu.github.io/cellGeometry/
+
+template:
+  bootstrap: 5
+  bootswatch: cosmo
+  bslib:
+    primary: "#0d6efd"
+    code-bg: "#f8f9fa"
+
+home:
+  title: "cellGeometry - Geometric Single-Cell Deconvolution"
+  description: >
+    Ultrafast deconvolution of bulk RNA-Seq datasets using high-dimensional
+    geometric methodology based on single-cell RNA-Seq reference data.
+  links:
+  - text: GitHub
+    href: https://github.com/Zaoqu-Liu/cellGeometry
+  - text: R-universe
+    href: https://zaoqu-liu.r-universe.dev/cellGeometry
+
+authors:
+  Zaoqu Liu:
+    href: https://github.com/Zaoqu-Liu
+  Myles Lewis:
+    href: https://github.com/myles-lewis
+
+navbar:
+  structure:
+    left:  [intro, reference, articles, tutorials, news]
+    right: [search, github]
+  components:
+    intro:
+      text: Get Started
+      href: articles/intro.html
+    reference:
+      text: Reference
+      href: reference/index.html
+    articles:
+      text: Articles
+      menu:
+      - text: "Mathematical Foundations"
+        href: articles/algorithm.html
+      - text: "Visualization Guide"
+        href: articles/visualization.html
+      - text: "---"
+      - text: "All articles"
+        href: articles/index.html
+    tutorials:
+      text: Tutorials
+      menu:
+      - text: "Quick Start Guide"
+        href: articles/intro.html
+      - text: "Real-World Application"
+        href: articles/real_world.html
+      - text: "Large-Scale: Brain Atlas"
+        href: articles/brain_atlas.html
+    news:
+      text: Changelog
+      href: news/index.html
+    github:
+      icon: fab fa-github fa-lg
+      href: https://github.com/Zaoqu-Liu/cellGeometry
+
+reference:
+- title: "Core Functions"
+  desc: "Main functions for building signatures and deconvolution"
+  contents:
+  - cellMarkers
+  - deconvolute
+  - updateMarkers
+  - mergeMarkers
+
+- title: "Marker Analysis"
+  desc: "Functions for analyzing and selecting marker genes"
+  contents:
+  - gene_angle
+  - cos_similarity
+  - rank_angle
+  - diagnose
+
+- title: "Simulation"
+  desc: "Functions for generating simulated bulk data"
+  contents:
+  - generate_samples
+  - simulate_bulk
+  - add_noise
+  - log_noise
+
+- title: "Visualization"
+  desc: "Functions for visualizing signatures and results"
+  contents:
+  - signature_heatmap
+  - spillover_heatmap
+  - comp_heatmap
+  - plot_set
+  - plot_comp
+  - stack_plot
+  - specificity_plot
+  - violin_plot
+
+- title: "Tuning & Diagnostics"
+  desc: "Functions for parameter tuning and model diagnostics"
+  contents:
+  - tune_deconv
+  - summary.tune_deconv
+  - plot_tune
+  - metric_set
+  - plot_residuals
+  - residuals.deconv
+  - rstudent.deconv
+  - plot.qqmap
+
+- title: "Data Processing"
+  desc: "Utility functions for data manipulation"
+  contents:
+  - gene2symbol
+  - scmean
+  - scapply
+  - slapply
+  - quantile_map
+  - reduceNoise
+  - fix_bulk
+  - adjust_library_size
+
+- title: "Helper Functions"
+  desc: "Internal and helper functions"
+  contents:
+  - logmean
+  - collapse_group
+  - fix_group
+
+articles:
+- title: "Getting Started"
+  navbar: ~
+  contents:
+  - intro
+
+- title: "Theory & Methods"
+  desc: "Understanding the algorithms"
+  contents:
+  - algorithm
+  - visualization
+
+- title: "Tutorials"
+  desc: "Step-by-step guides"
+  contents:
+  - real_world
+  - brain_atlas
+
+footer:
+  structure:
+    left: developed_by
+    right: built_with
+  components:
+    developed_by: >
+      Developed by [Zaoqu Liu](https://github.com/Zaoqu-Liu) and 
+      [Myles Lewis](https://github.com/myles-lewis).
+
+news:
+  one_page: true
+  cran_dates: false

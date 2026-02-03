@@ -1,0 +1,337 @@
+---
+title: "Mathematical Foundations of cellGeometry"
+author: "Zaoqu Liu, Myles Lewis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    mathjax: default
+vignette: >
+  %\VignetteIndexEntry{Mathematical Foundations of cellGeometry}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+# Introduction
+
+**cellGeometry** implements a novel geometric approach for bulk RNA-Seq deconvolution using single-cell RNA-Seq reference data. This vignette provides a detailed explanation of the mathematical foundations underlying the algorithm.
+
+The core insight is that cell type proportions can be estimated by treating gene expression profiles as vectors in high-dimensional space and computing their projections onto cell type-specific signatures.
+
+# Vector Space Representation
+
+## Gene Expression as Vectors
+
+In cellGeometry, we represent gene expression data in a vector space framework:
+
+- **Genes** are treated as observations (rows)
+- **Cell types** define the coordinate axes (dimensions)
+- Each **gene** is a vector pointing in the direction of its expression pattern
+
+For a dataset with $n$ genes and $k$ cell types, the gene expression matrix $\mathbf{G} \in \mathbb{R}^{n \times k}$ where:
+
+$$G_{ij} = \log_2(\text{mean expression of gene } i \text{ in cell type } j + 1)$$
+
+## Unit Hypersphere Normalization
+
+To compare genes fairly regardless of their absolute expression levels, we normalize each gene vector to lie on the unit hypersphere:
+
+$$\hat{\mathbf{g}}_i = \frac{\mathbf{g}_i}{\|\mathbf{g}_i\|_2} = \frac{\mathbf{g}_i}{\sqrt{\sum_{j=1}^{k} g_{ij}^2}}$$
+
+After normalization, all gene vectors have unit length ($\|\hat{\mathbf{g}}_i\| = 1$), allowing us to focus purely on their directional properties.
+
+```{r sphere-demo, echo=TRUE, eval=TRUE}
+# Demonstration of hypersphere normalization
+set.seed(42)
+gene_expr <- matrix(c(10, 2, 1,   # Gene 1: high in type A
+                      3, 8, 2,    # Gene 2: high in type B  
+                      1, 1, 5),   # Gene 3: high in type C
+                    nrow = 3, byrow = TRUE,
+                    dimnames = list(paste0("Gene", 1:3), 
+                                    paste0("Type", LETTERS[1:3])))
+
+# Normalize to unit sphere
+normalize_sphere <- function(x) {
+  lengths <- sqrt(rowSums(x^2))
+  x / lengths
+}
+
+gene_normalized <- normalize_sphere(gene_expr)
+
+cat("Original gene vectors:\n")
+print(round(gene_expr, 2))
+
+cat("\nNormalized vectors (unit length):\n")
+print(round(gene_normalized, 3))
+
+cat("\nVector lengths (all = 1):\n")
+print(round(sqrt(rowSums(gene_normalized^2)), 6))
+```
+
+# Marker Gene Selection
+
+## Angular Distance Criterion
+
+The quality of a marker gene for cell type $c$ is determined by the **angular distance** from the unit vector $\mathbf{e}_c$ corresponding to that cell type:
+
+$$\theta_c(\mathbf{g}) = \arccos\left(\hat{\mathbf{g}} \cdot \mathbf{e}_c\right) = \arccos\left(\hat{g}_c\right)$$
+
+where $\hat{g}_c$ is the $c$-th component of the normalized gene vector.
+
+**Interpretation:**
+- $\theta = 0°$: Perfect marker (expressed only in cell type $c$)
+- $\theta = 45°$: Moderate specificity
+- $\theta = 90°$: No association with cell type $c$
+
+```{r angle-demo, echo=TRUE, eval=TRUE}
+# Calculate angles from each coordinate axis
+angles_rad <- acos(gene_normalized)
+angles_deg <- angles_rad * 180 / pi
+
+cat("Angular distance (degrees) to each cell type axis:\n")
+print(round(angles_deg, 1))
+
+cat("\nBest marker for each cell type:\n")
+for(j in 1:3) {
+  best_gene <- which.min(angles_deg[, j])
+  cat(sprintf("  %s: %s (%.1f°)\n", 
+              colnames(angles_deg)[j], 
+              rownames(angles_deg)[best_gene],
+              angles_deg[best_gene, j]))
+}
+```
+
+## Marker Selection Algorithm
+
+For each cell type $c$, genes are ranked by:
+
+1. **Primary criterion**: Smallest angle $\theta_c$
+2. **Secondary criterion**: Highest maximum expression (to favor robustly expressed genes)
+
+The top $N$ genes (default: 25) for each cell type form the signature matrix.
+
+# Vector Dot Product Deconvolution
+
+## Mathematical Framework
+
+Given:
+- Signature matrix $\mathbf{S} \in \mathbb{R}^{m \times k}$ (m signature genes, k cell types)
+- Bulk sample vector $\mathbf{b} \in \mathbb{R}^{m}$
+
+The raw cell type contributions are computed via **vector projection**:
+
+$$p_c = \text{proj}_{\mathbf{s}_c}(\mathbf{b}) = \frac{\mathbf{b} \cdot \mathbf{s}_c}{\|\mathbf{s}_c\|^2}$$
+
+where $\mathbf{s}_c$ is the signature vector for cell type $c$.
+
+In matrix form:
+
+$$\mathbf{p} = \mathbf{b}^T \mathbf{S} \cdot \text{diag}\left(\frac{1}{\|\mathbf{s}_1\|^2}, \ldots, \frac{1}{\|\mathbf{s}_k\|^2}\right)$$
+
+```{r projection-demo, echo=TRUE, eval=TRUE}
+# Demonstration of vector projection
+signature <- matrix(c(8, 1, 0,   # Marker 1 for Type A
+                      1, 7, 0,   # Marker 2 for Type B
+                      0, 1, 6),  # Marker 3 for Type C
+                    nrow = 3, byrow = TRUE)
+colnames(signature) <- paste0("Type", LETTERS[1:3])
+
+# Simulated bulk sample (40% A, 35% B, 25% C)
+bulk <- signature %*% c(0.40, 0.35, 0.25)
+
+# Vector projection
+col_squared_norms <- colSums(signature^2)
+projections <- as.vector(t(bulk) %*% signature / col_squared_norms)
+names(projections) <- colnames(signature)
+
+cat("Signature matrix:\n")
+print(signature)
+
+cat("\nBulk sample:\n")
+print(round(as.vector(bulk), 2))
+
+cat("\nRaw projections:\n")
+print(round(projections, 3))
+
+cat("\nPercentages:\n")
+print(round(projections / sum(projections) * 100, 1))
+```
+
+## Equal Weight Transformation
+
+To prevent highly expressed genes from dominating the deconvolution, we apply equal weighting:
+
+$$w_i = \frac{1}{\|\mathbf{s}_{i,\cdot}\|_2}$$
+
+where $\mathbf{s}_{i,\cdot}$ is the $i$-th row (gene) of the signature matrix.
+
+The weighted projection becomes:
+
+$$p_c^{(w)} = \frac{\sum_{i=1}^{m} w_i \cdot b_i \cdot s_{ic}}{\sum_{i=1}^{m} w_i \cdot s_{ic}^2}$$
+
+# Spillover and Compensation
+
+## The Spillover Problem
+
+When cell types have similar expression profiles, projection onto one cell type's signature will capture signal from related cell types. This "spillover" can be quantified using the spillover matrix:
+
+$$\mathbf{M} = \mathbf{S}^T \mathbf{S} \cdot \text{diag}\left(\frac{1}{\|\mathbf{s}_1\|^2}, \ldots, \frac{1}{\|\mathbf{s}_k\|^2}\right)$$
+
+Properties of $\mathbf{M}$:
+- Diagonal elements = 1 (perfect self-projection)
+- Off-diagonal elements indicate cross-talk between cell types
+
+## Compensation Matrix
+
+To correct for spillover, we apply the inverse of the spillover matrix:
+
+$$\hat{\mathbf{p}} = \mathbf{M}^{-1} \cdot \mathbf{p}$$
+
+This ensures that if the bulk sample truly contains only cell type $c$, the compensated output shows 100% for cell type $c$ and 0% for all others.
+
+```{r compensation-demo, echo=TRUE, eval=TRUE}
+# Spillover matrix calculation
+col_norms_sq <- colSums(signature^2)
+spillover <- t(signature) %*% signature / col_norms_sq
+
+cat("Spillover matrix:\n")
+print(round(spillover, 3))
+
+cat("\nCompensation matrix (inverse):\n")
+compensation <- solve(spillover)
+print(round(compensation, 3))
+
+# Apply compensation
+raw_projections <- projections
+compensated <- as.vector(compensation %*% raw_projections)
+names(compensated) <- colnames(signature)
+
+cat("\nRaw vs Compensated projections:\n")
+comparison <- data.frame(Raw = round(raw_projections, 3),
+                         Compensated = round(compensated, 3),
+                         True = c(0.40, 0.35, 0.25))
+print(comparison)
+```
+
+# Cosine Similarity Analysis
+
+## Definition
+
+The **cosine similarity** between two cell type signatures measures their angular relationship:
+
+$$\cos(\theta_{ab}) = \frac{\mathbf{s}_a \cdot \mathbf{s}_b}{\|\mathbf{s}_a\| \cdot \|\mathbf{s}_b\|}$$
+
+- $\cos(\theta) = 1$: Identical signatures (problematic)
+- $\cos(\theta) = 0$: Orthogonal signatures (ideal)
+- $\cos(\theta) < 0$: Opposite patterns (rare)
+
+## Diagnostic Application
+
+High cosine similarity between cell types indicates:
+1. Potential difficulty in distinguishing them during deconvolution
+2. Need to consider merging or removing one cell type
+3. Biological relatedness that may require careful interpretation
+
+```{r cosine-demo, echo=TRUE, eval=TRUE}
+# Calculate cosine similarity
+cosine_sim <- function(S) {
+  norms <- sqrt(colSums(S^2))
+  sim <- t(S) %*% S / (norms %o% norms)
+  return(sim)
+}
+
+# Extended example with similar cell types
+signature_extended <- cbind(
+  TypeA = c(8, 1, 0, 2),
+  TypeB = c(1, 7, 0, 3),
+  TypeC = c(0, 1, 6, 1),
+  TypeA_sub = c(7, 2, 0, 2)  # Similar to TypeA
+)
+
+cos_matrix <- cosine_sim(signature_extended)
+cat("Cosine similarity matrix:\n")
+print(round(cos_matrix, 3))
+
+# Convert to angles
+angle_matrix <- acos(pmin(cos_matrix, 1)) * 180 / pi
+cat("\nAngular distance (degrees):\n")
+print(round(angle_matrix, 1))
+```
+
+# Noise Reduction
+
+## Threshold-Based Filtering
+
+To reduce the impact of non-specific background expression, cellGeometry applies a noise filter:
+
+$$\tilde{s}_{ic} = \begin{cases} s_{ic} & \text{if } s_{ic} \geq f \cdot \max_j(s_{ij}) \\ 0 & \text{otherwise} \end{cases}$$
+
+where $f$ is the `noisefraction` parameter (default: 0.25).
+
+This ensures that only expression values above a certain fraction of the gene's maximum are retained in the signature.
+
+## Effect on Deconvolution
+
+Noise filtering:
+- Reduces compensation burden
+- Improves specificity of markers
+- May increase sensitivity to missing cell types
+
+# Multi-Pass Deconvolution
+
+## Outlier Detection
+
+cellGeometry implements iterative outlier detection to identify and remove problematic genes:
+
+1. Perform initial deconvolution
+2. Compute studentized residuals for each gene
+3. Flag genes with $|r_i^*| > 3$ as outliers
+4. Repeat deconvolution without outliers
+5. Continue until convergence
+
+## Studentized Residuals
+
+The studentized residual for gene $i$ is:
+
+$$r_i^* = \frac{e_i}{\hat{\sigma}\sqrt{1 - h_{ii}}}$$
+
+where:
+- $e_i = y_i - \hat{y}_i$ is the raw residual
+- $\hat{\sigma}$ is the estimated standard error
+- $h_{ii}$ is the $i$-th diagonal element of the hat matrix
+
+# Summary
+
+The cellGeometry algorithm combines several geometric principles:
+
+| Component | Mathematical Basis | Purpose |
+|-----------|-------------------|---------|
+| Hypersphere normalization | $\|\hat{\mathbf{g}}\| = 1$ | Scale-invariant gene comparison |
+| Angular distance | $\theta = \arccos(\hat{g}_c)$ | Marker gene selection |
+| Vector projection | $\text{proj}_\mathbf{v}(\mathbf{u})$ | Cell type contribution estimation |
+| Spillover matrix | $\mathbf{M} = \mathbf{S}^T\mathbf{S}$ | Cross-talk quantification |
+| Compensation | $\mathbf{M}^{-1}$ | Cross-talk correction |
+
+This geometric framework provides:
+- **Interpretability**: Results have clear geometric meaning
+- **Efficiency**: Matrix operations enable fast computation
+- **Robustness**: Compensation corrects for signature overlap
+
+# Session Info
+
+```{r session}
+sessionInfo()
+```

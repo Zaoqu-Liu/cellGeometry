@@ -1,0 +1,457 @@
+---
+title: "Visualization Guide for cellGeometry"
+author: "Zaoqu Liu, Myles Lewis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+vignette: >
+  %\VignetteIndexEntry{Visualization Guide for cellGeometry}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Introduction
+
+This vignette provides a comprehensive guide to the visualization functions in **cellGeometry**. Effective visualization is crucial for:
+
+- Quality control of gene signatures
+- Identifying problematic cell types
+- Interpreting deconvolution results
+- Communicating findings
+
+# Overview of Visualization Functions
+
+cellGeometry provides several specialized visualization functions:
+
+| Function | Purpose |
+|----------|---------|
+| `signature_heatmap()` | Display gene signature matrix |
+| `spillover_heatmap()` | Visualize cell type cross-talk |
+| `plot_set()` | Compare predictions with ground truth |
+| `plot_comp()` | Show compensation matrix |
+| `comp_heatmap()` | Detailed compensation heatmap |
+| `cos_similarity()` | Compute cosine similarity for visualization |
+| `specificity_plot()` | Gene marker specificity |
+| `violin_plot()` | Expression distribution |
+| `stack_plot()` | Stacked bar charts for proportions |
+| `plot_tune()` | Tuning results visualization |
+
+# Signature Visualization
+
+## Signature Heatmap
+
+The signature heatmap displays the gene expression matrix used for deconvolution.
+
+```{r signature-concept, echo=TRUE, eval=TRUE}
+# Conceptual demonstration with synthetic data
+library(ggplot2)
+
+# Create synthetic signature data
+set.seed(42)
+n_genes <- 50
+n_types <- 8
+type_names <- c("CD4+ T cells", "CD8+ T cells", "B cells", "NK cells",
+                "Monocytes", "Dendritic", "Neutrophils", "Basophils")
+
+# Generate signature with cell-type specific patterns
+signature <- matrix(0, nrow = n_genes, ncol = n_types)
+colnames(signature) <- type_names
+rownames(signature) <- paste0("Gene", 1:n_genes)
+
+# Each cell type gets specific marker genes
+genes_per_type <- n_genes / n_types
+for(i in 1:n_types) {
+  start_idx <- (i-1) * genes_per_type + 1
+  end_idx <- i * genes_per_type
+  
+  # High expression in target cell type
+  signature[start_idx:end_idx, i] <- runif(genes_per_type, 5, 10)
+  
+  # Some spillover to related types
+  if(i > 1) signature[start_idx:end_idx, i-1] <- runif(genes_per_type, 0, 2)
+  if(i < n_types) signature[start_idx:end_idx, i+1] <- runif(genes_per_type, 0, 2)
+}
+
+# Add background noise
+signature <- signature + matrix(runif(n_genes * n_types, 0, 0.5), 
+                                nrow = n_genes, ncol = n_types)
+
+# Visualize with ggplot2
+sig_long <- reshape2::melt(signature)
+colnames(sig_long) <- c("Gene", "CellType", "Expression")
+
+ggplot(sig_long, aes(x = CellType, y = Gene, fill = Expression)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "white", mid = "orange", high = "red",
+                       midpoint = 5, name = "Log2\nExpression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title = "Gene Signature Matrix",
+       subtitle = "Each column represents a cell type's expression profile",
+       x = "Cell Type", y = "Genes (50 total)")
+```
+
+### Key Parameters
+
+When using `signature_heatmap()`:
+
+- `top`: Number of top genes to display per cell type
+- `use_filter`: Whether to show noise-filtered signatures
+- `scale`: Scaling method ("none", "row", "column", "sphere")
+- `show_row_names`: Display gene names
+
+## Heatmap Interpretation
+
+The signature heatmap reveals:
+
+1. **Marker specificity**: Distinct bands indicate good markers
+2. **Cell type similarity**: Similar columns suggest related cell types
+3. **Signature quality**: Clean diagonal pattern indicates well-separated cell types
+
+```{r interpretation, echo=TRUE, eval=TRUE, fig.height=4}
+# Create diagnostic plots
+par(mfrow = c(1, 2))
+
+# Good signature: clear diagonal
+good_sig <- diag(8) * 8 + matrix(runif(64, 0, 1), 8, 8)
+image(good_sig, main = "Good Signature\n(Clear diagonal)", 
+      col = heat.colors(20), axes = FALSE)
+
+# Problematic signature: high spillover
+bad_sig <- matrix(runif(64, 3, 6), 8, 8) + diag(8) * 3
+image(bad_sig, main = "Problematic Signature\n(High spillover)", 
+      col = heat.colors(20), axes = FALSE)
+
+par(mfrow = c(1, 1))
+```
+
+# Spillover Analysis
+
+## Spillover Heatmap
+
+The spillover matrix quantifies how much signal from one cell type "spills over" into another during deconvolution.
+
+```{r spillover-demo, echo=TRUE, eval=TRUE}
+# Calculate spillover matrix
+calc_spillover <- function(S) {
+  col_norms_sq <- colSums(S^2)
+  spill <- t(S) %*% S
+  sweep(spill, 2, col_norms_sq, "/")
+}
+
+spillover <- calc_spillover(signature)
+
+# Visualize
+spill_long <- reshape2::melt(spillover)
+colnames(spill_long) <- c("From", "To", "Spillover")
+
+ggplot(spill_long, aes(x = To, y = From, fill = Spillover)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", Spillover)), size = 3) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                       midpoint = 0.5, limits = c(0, 1),
+                       name = "Spillover\nCoefficient") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Spillover Matrix",
+       subtitle = "Diagonal should be 1.0, off-diagonal should be low",
+       x = "Target Cell Type", y = "Source Cell Type") +
+  coord_fixed()
+```
+
+## Interpreting Spillover
+
+| Spillover Value | Interpretation | Action |
+|-----------------|----------------|--------|
+| 0.00 - 0.10 | Excellent separation | None needed |
+| 0.10 - 0.25 | Acceptable | Monitor results |
+| 0.25 - 0.50 | Moderate overlap | Consider merging or improving markers |
+| > 0.50 | High overlap | Cell types may be indistinguishable |
+
+# Cosine Similarity
+
+## Understanding Cosine Similarity
+
+Cosine similarity measures the angular relationship between cell type signatures.
+
+```{r cosine-viz, echo=TRUE, eval=TRUE}
+# Calculate cosine similarity
+calc_cosine <- function(S) {
+  norms <- sqrt(colSums(S^2))
+  sim <- t(S) %*% S / (norms %o% norms)
+  return(sim)
+}
+
+cos_sim <- calc_cosine(signature)
+
+# Convert to angles for interpretation
+angles <- acos(pmin(cos_sim, 1)) * 180 / pi
+
+# Visualize cosine similarity
+cos_long <- reshape2::melt(cos_sim)
+colnames(cos_long) <- c("TypeA", "TypeB", "Similarity")
+
+p1 <- ggplot(cos_long, aes(x = TypeA, y = TypeB, fill = Similarity)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", mid = "yellow", high = "red",
+                       midpoint = 0.5, name = "Cosine\nSimilarity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Cosine Similarity Matrix",
+       x = "", y = "") +
+  coord_fixed()
+
+print(p1)
+```
+
+## Angular Distance Visualization
+
+```{r angle-viz, echo=TRUE, eval=TRUE}
+# Visualize as angles
+angle_long <- reshape2::melt(angles)
+colnames(angle_long) <- c("TypeA", "TypeB", "Angle")
+
+ggplot(angle_long, aes(x = TypeA, y = TypeB, fill = Angle)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.0f°", Angle)), size = 2.5) +
+  scale_fill_gradient2(low = "red", mid = "yellow", high = "green",
+                       midpoint = 45, name = "Angular\nDistance (°)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Angular Distance Between Cell Types",
+       subtitle = "90° = orthogonal (ideal), 0° = identical (problematic)",
+       x = "", y = "") +
+  coord_fixed()
+```
+
+# Deconvolution Results
+
+## Scatter Plots with plot_set()
+
+After deconvolution, compare predicted vs true proportions:
+
+```{r scatter-demo, echo=TRUE, eval=TRUE}
+# Simulate deconvolution results
+set.seed(123)
+n_samples <- 30
+
+# True proportions (ground truth)
+true_props <- matrix(runif(n_samples * n_types), nrow = n_samples, ncol = n_types)
+true_props <- true_props / rowSums(true_props) * 100
+colnames(true_props) <- type_names
+
+# Predicted proportions (with some error)
+pred_props <- true_props + matrix(rnorm(n_samples * n_types, 0, 5), 
+                                   nrow = n_samples, ncol = n_types)
+pred_props[pred_props < 0] <- 0
+pred_props <- pred_props / rowSums(pred_props) * 100
+colnames(pred_props) <- type_names
+
+# Create comparison plots
+par(mfrow = c(2, 4), mar = c(4, 4, 2, 1))
+for(i in 1:n_types) {
+  plot(true_props[, i], pred_props[, i],
+       xlab = "True %", ylab = "Predicted %",
+       main = type_names[i],
+       pch = 19, col = rgb(0.2, 0.4, 0.8, 0.6))
+  abline(0, 1, col = "red", lty = 2, lwd = 2)
+  
+  # Add correlation
+  r <- cor(true_props[, i], pred_props[, i])
+  text(max(true_props[, i]) * 0.1, max(pred_props[, i]) * 0.9,
+       sprintf("r = %.3f", r), adj = 0, cex = 0.9)
+}
+par(mfrow = c(1, 1))
+```
+
+## Performance Metrics
+
+```{r metrics, echo=TRUE, eval=TRUE}
+# Calculate performance metrics
+metrics <- data.frame(
+  CellType = type_names,
+  Pearson_R = sapply(1:n_types, function(i) cor(true_props[,i], pred_props[,i])),
+  RMSE = sapply(1:n_types, function(i) sqrt(mean((true_props[,i] - pred_props[,i])^2))),
+  MAE = sapply(1:n_types, function(i) mean(abs(true_props[,i] - pred_props[,i])))
+)
+
+# Format nicely
+metrics$Pearson_R <- round(metrics$Pearson_R, 3)
+metrics$RMSE <- round(metrics$RMSE, 2)
+metrics$MAE <- round(metrics$MAE, 2)
+
+knitr::kable(metrics, caption = "Deconvolution Performance Metrics")
+```
+
+# Stack Plots for Composition
+
+Stack plots are ideal for visualizing sample composition:
+
+```{r stack-demo, echo=TRUE, eval=TRUE, fig.height=8}
+# Prepare data for stacked bar chart
+library(reshape2)
+
+pred_long <- melt(pred_props)
+colnames(pred_long) <- c("Sample", "CellType", "Percentage")
+pred_long$Sample <- factor(pred_long$Sample, levels = 1:n_samples)
+
+# Color palette
+colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", 
+            "#FF7F00", "#FFFF33", "#A65628", "#F781BF")
+
+ggplot(pred_long, aes(x = Sample, y = Percentage, fill = CellType)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_manual(values = colors, name = "Cell Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  labs(title = "Sample Composition by Cell Type",
+       subtitle = "Predicted cell type proportions across samples",
+       x = "Sample", y = "Percentage (%)")
+```
+
+# Tuning Visualization
+
+## plot_tune() Results
+
+When tuning deconvolution parameters:
+
+```{r tune-demo, echo=TRUE, eval=TRUE}
+# Simulate tuning results
+tune_results <- expand.grid(
+  nsubclass = c(5, 10, 15, 25, 50, 100),
+  expfilter = c(0.1, 0.25, 0.5, 1.0),
+  weight_method = c("none", "equal")
+)
+
+# Simulated RMSE (lower is better)
+set.seed(42)
+tune_results$RMSE <- 50 - 10 * log(tune_results$nsubclass) + 
+                      5 * tune_results$expfilter +
+                      ifelse(tune_results$weight_method == "equal", -5, 5) +
+                      rnorm(nrow(tune_results), 0, 2)
+
+# Visualize
+ggplot(tune_results, aes(x = nsubclass, y = RMSE, 
+                         color = weight_method, linetype = factor(expfilter))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_x_log10() +
+  scale_color_manual(values = c("none" = "#E41A1C", "equal" = "#377EB8"),
+                     name = "Weight Method") +
+  scale_linetype_discrete(name = "Expression\nFilter") +
+  theme_minimal() +
+  labs(title = "Deconvolution Parameter Tuning",
+       subtitle = "Effect of nsubclass, expfilter, and weight_method on RMSE",
+       x = "Number of Genes per Subclass (log scale)",
+       y = "RMSE (lower is better)")
+```
+
+# Residual Diagnostics
+
+## Residual Analysis
+
+Visualize regression diagnostics:
+
+```{r residuals-demo, echo=TRUE, eval=TRUE}
+# Simulate residuals
+set.seed(456)
+n_genes_sig <- 100
+residuals <- rnorm(n_genes_sig, 0, 1)
+fitted_values <- runif(n_genes_sig, 0, 10)
+studentized <- residuals / sd(residuals)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+
+# Residuals vs Fitted
+plot(fitted_values, residuals,
+     xlab = "Fitted Values", ylab = "Residuals",
+     main = "Residuals vs Fitted",
+     pch = 19, col = rgb(0.2, 0.4, 0.8, 0.5))
+abline(h = 0, col = "red", lty = 2)
+
+# Q-Q Plot
+qqnorm(studentized, main = "Normal Q-Q Plot",
+       pch = 19, col = rgb(0.2, 0.4, 0.8, 0.5))
+qqline(studentized, col = "red")
+
+# Histogram of residuals
+hist(residuals, breaks = 20, main = "Distribution of Residuals",
+     xlab = "Residual", col = rgb(0.2, 0.4, 0.8, 0.7), border = "white")
+
+# Studentized residuals
+plot(1:n_genes_sig, studentized,
+     xlab = "Gene Index", ylab = "Studentized Residual",
+     main = "Studentized Residuals",
+     pch = 19, col = ifelse(abs(studentized) > 3, "red", rgb(0.2, 0.4, 0.8, 0.5)))
+abline(h = c(-3, 3), col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Best Practices
+
+## Visualization Checklist
+
+When analyzing deconvolution results:
+
+1. **Signature Quality**
+   - [ ] Check signature heatmap for clear diagonal pattern
+   - [ ] Verify spillover matrix has low off-diagonal values
+   - [ ] Examine cosine similarity for highly similar cell types
+
+2. **Deconvolution Results**
+   - [ ] Compare scatter plots of predicted vs true (if available)
+   - [ ] Check that proportions sum to 100%
+   - [ ] Look for unexpected negative values or outliers
+
+3. **Parameter Tuning**
+   - [ ] Visualize tuning results across parameter ranges
+   - [ ] Identify optimal parameter combinations
+   - [ ] Validate with independent test data
+
+## Color Palette Recommendations
+
+For consistent, publication-quality figures:
+
+```{r colors, echo=TRUE, eval=TRUE, fig.height=2}
+# Recommended color palettes
+palettes <- list(
+  "Cell Types" = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", 
+                   "#FF7F00", "#FFFF33", "#A65628", "#F781BF"),
+  "Sequential" = colorRampPalette(c("white", "orange", "red"))(9),
+  "Diverging" = colorRampPalette(c("blue", "white", "red"))(9)
+)
+
+par(mfrow = c(3, 1), mar = c(1, 8, 2, 1))
+for(name in names(palettes)) {
+  image(matrix(1:length(palettes[[name]]), nrow = 1), 
+        col = palettes[[name]], axes = FALSE)
+  mtext(name, side = 2, las = 1, line = 1)
+}
+par(mfrow = c(1, 1))
+```
+
+# Session Info
+
+```{r session}
+sessionInfo()
+```

@@ -1,0 +1,13 @@
+pandoc: 3.7.0.1
+pkgdown: 2.2.0
+pkgdown_sha: ~
+articles:
+  algorithm: algorithm.html
+  brain_atlas: brain_atlas.html
+  intro: intro.html
+  real_world: real_world.html
+  visualization: visualization.html
+last_built: 2026-02-03T08:31Z
+urls:
+  reference: https://zaoqu-liu.github.io/cellGeometry/reference
+  article: https://zaoqu-liu.github.io/cellGeometry/articles
